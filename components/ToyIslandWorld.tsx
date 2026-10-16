@@ -1076,7 +1076,7 @@ export default function ToyIslandWorld() {
 
       {/* Keyboard hint (desktop) */}
       <div className="pointer-events-none absolute bottom-5 left-5 z-10 hidden rounded-2xl border-4 border-slate-900 bg-amber-50 px-4 py-2 text-xs font-bold text-slate-700 shadow-[4px_4px_0_#0f172a] md:block">
-        WASD / Arrows to drive &nbsp;•&nbsp; Shift to boost &nbsp;•&nbsp; Space to jump
+        WASD / Joystick to drive &nbsp;•&nbsp; Shift to boost &nbsp;•&nbsp; Space to jump
         <br />
         Slow down inside a glowing ring to park
       </div>
