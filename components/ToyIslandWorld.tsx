@@ -850,7 +850,7 @@ function IntroCard({ onStart }: { onStart: () => void }) {
             </li>
           ))}
         </ul>
-        <p className="mt-3 text-xs text-slate-500">On a phone, use the buttons at the bottom of the screen.</p>
+        <p className="mt-3 text-xs text-slate-500">On a phone, use the joystick at the bottom of the screen.</p>
         <button
           type="button"
           autoFocus
