@@ -821,7 +821,7 @@ function ZoneOverlay({ zone }: { zone: ZoneId | null }) {
 
 function IntroCard({ onStart }: { onStart: () => void }) {
   const keys = [
-    ["W A S D / Arrows", "Drive and steer"],
+    ["W A S D / Joystick", "Drive and steer"],
     ["Shift", "Boost"],
     ["Space", "Jump"],
   ];
