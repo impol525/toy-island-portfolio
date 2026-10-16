@@ -900,6 +900,80 @@ function DPadButton({
   );
 }
 
+
+
+
+function Joystick({ setControl }: { setControl: (key: keyof Controls, value: boolean) => void }) {
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const baseRef = useRef<HTMLDivElement>(null);
+  const active = useRef(false);
+
+  const handleMove = useCallback((e: PointerEvent) => {
+    if (!active.current || !baseRef.current) return;
+    
+    const rect = baseRef.current.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    
+    let dx = e.clientX - centerX;
+    let dy = e.clientY - centerY;
+
+    // Constrain the joystick knob to the outer circle
+    const max = rect.width / 2 - 24; 
+    const dist = Math.hypot(dx, dy);
+    if (dist > max) {
+      dx = (dx / dist) * max;
+      dy = (dy / dist) * max;
+    }
+    setPos({ x: dx, y: dy });
+
+    // Map the analog position to our car's digital WASD inputs
+    const thresh = 12;
+    setControl("up", dy < -thresh);
+    setControl("down", dy > thresh);
+    setControl("left", dx < -thresh);
+    setControl("right", dx > thresh);
+  }, [setControl]);
+
+  const handleUp = useCallback(() => {
+    active.current = false;
+    setPos({ x: 0, y: 0 });
+    setControl("up", false);
+    setControl("down", false);
+    setControl("left", false);
+    setControl("right", false);
+    window.removeEventListener("pointermove", handleMove);
+    window.removeEventListener("pointerup", handleUp);
+  }, [handleMove, setControl]);
+
+  const handleDown = (e: React.PointerEvent) => {
+    active.current = true;
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    handleMove(e.nativeEvent); // Trigger immediately on tap
+  };
+
+  useEffect(() => {
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [handleMove, handleUp]);
+
+  return (
+    <div
+      ref={baseRef}
+      onPointerDown={handleDown}
+      className="relative flex h-32 w-32 touch-none items-center justify-center rounded-full border-4 border-slate-900 bg-white/40 shadow-[4px_4px_0_#0f172a] backdrop-blur-md"
+    >
+      <div
+        className="absolute h-14 w-14 rounded-full border-4 border-slate-900 bg-orange-500 shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)]"
+        style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
+      />
+    </div>
+  );
+}
+
 // ==========================================
 // MAIN COMPONENT
 // ==========================================
@@ -1008,21 +1082,8 @@ export default function ToyIslandWorld() {
       </div>
 
       {/* Touch D-pad (mobile) */}
-      <div className="absolute bottom-5 left-4 z-30 grid grid-cols-3 gap-1.5 md:hidden">
-        <span />
-        <DPadButton label="Drive forward" onPress={(d) => setControl("up", d)}>
-          <ArrowUp />
-        </DPadButton>
-        <span />
-        <DPadButton label="Turn left" onPress={(d) => setControl("left", d)}>
-          <ArrowLeft />
-        </DPadButton>
-        <DPadButton label="Reverse" onPress={(d) => setControl("down", d)}>
-          <ArrowDown />
-        </DPadButton>
-        <DPadButton label="Turn right" onPress={(d) => setControl("right", d)}>
-          <ArrowRight />
-        </DPadButton>
+     <div className="absolute bottom-6 left-6 z-30 md:hidden">
+        <Joystick setControl={setControl} />
       </div>
       <div className="absolute bottom-5 right-4 z-30 flex flex-col gap-2 md:hidden">
         <DPadButton label="Jump" onPress={(d) => setControl("jump", d)}>
