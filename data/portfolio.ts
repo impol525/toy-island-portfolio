@@ -1,0 +1,57 @@
+export const PORTFOLIO_DATA = {
+  name: "Paul Raphael O. Nicolas",
+  role: "BSIT Student | Full-Stack Developer",
+  location: "Gen. Natividad, Nueva Ecija",
+  email: "paulraph.nic25@gmail.com",
+  github: "https://github.com/impol525",
+  // Drop these two files into /public (see notes)
+  photo: "/profile.jpg",
+  resumePdf: "/Paul-Raphael-Nicolas-Resume.pdf",
+  certification: "Civil Service Exam - Professional Level (CSC Passer, Aug 2026)",
+  education: {
+    degree: "Bachelor of Science in Information Technology",
+    major: "Web System Technology (2023–2027)",
+    school: "NEUST - Nueva Ecija University of Science and Technology (Atate Campus)",
+  },
+  objective:
+    "BSIT student and Civil Service Exam (Professional) passer seeking an opportunity to grow as a software developer. Brings hands-on experience building web and mobile information systems for a municipal disaster-response office, along with skills in database management, technical documentation, and full-stack development.",
+  skills: [
+    "Ionic",
+    "Angular",
+    "TypeScript",
+    "JavaScript",
+    "HTML/CSS",
+    "Capacitor",
+    "Firebase",
+    "PHP",
+    "MySQL",
+    "Leaflet.js",
+    "REST APIs",
+    "Git & GitHub",
+    "Agile (Scrum)",
+  ],
+  projects: [
+    {
+      title: "Bongabon LifeLink (Capstone)",
+      role: "Full-Stack Developer (Team of 4)",
+      period: "2025 – 2026",
+      tech: ["Ionic", "Angular", "Capacitor", "PHP", "MySQL", "Leaflet.js"],
+      desc: "Incident tracking and responder coordination platform for MDRRMO Bongabon. Features a real-time Live Board with Leaflet.js map tracking, native responder app with offline queuing, digital patient care reports, and role-based bcrypt security.",
+      github: "https://github.com/impol525",
+    },
+    {
+      title: "SnapAttend",
+      role: "Full-Stack Developer",
+      period: "2025 – 2026",
+      tech: ["Ionic", "Angular", "Capacitor", "Firebase", "TypeScript"],
+      desc: "Cross-platform QR attendance app with Haversine GPS geofencing, anti-proxy 24-hour device binding, real-time Firestore sync, host session history dashboards, and CSV report exports.",
+      github: "https://github.com/impol525",
+    },
+  ],
+  trainings: [
+    "Modern Web Development: From Front-End to Full-Stack (WVSU, Aug 2026)",
+    "Cultivating Innovation: Agricultural Challenges into Tech (DICT CALABARZON, Aug 2026)",
+    "PRESS START: Game Development in Region 8 (DICT Region VIII, Aug 2026)",
+    "How to Grow Your I.T. Career by Becoming CCNA (Tech Academy, Aug 2026)",
+  ],
+};
