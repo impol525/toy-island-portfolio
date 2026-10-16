@@ -74,7 +74,16 @@ type Controls = {
   right: boolean;
   boost: boolean;
   jump: boolean;
+  /** Normalized joystick axes. joyX: right is positive; joyY: up is positive. */
+  joyX: number;
+  joyY: number;
 };
+
+type DigitalControl = "up" | "down" | "left" | "right" | "boost" | "jump";
+
+const JOYSTICK_KNOB_RADIUS = 28;
+const JOYSTICK_EDGE_PADDING = 8;
+const JOYSTICK_DEADZONE = 0.12;
 
 // ==========================================
 // 3D PIECES
@@ -387,6 +396,9 @@ function ToyCarScene({
   const yPosRef = useRef(0);
   const currentZoneRef = useRef<ZoneId | null>(null);
   const camTarget = useMemo(() => new THREE.Vector3(), []);
+  // Reused camera basis vectors; no per-frame Vector3 allocations are needed.
+  const cameraRight = useMemo(() => new THREE.Vector3(), []);
+  const cameraUp = useMemo(() => new THREE.Vector3(), []);
 
   useEffect(() => {
     if (teleportTarget) {
@@ -403,16 +415,78 @@ function ToyCarScene({
     const maxSpeed = ctrl.boost ? 16 : 10;
     const accel = ctrl.boost ? 26 : 16;
 
-    if (ctrl.up) velocityRef.current += accel * dt;
-    if (ctrl.down) velocityRef.current -= accel * 0.8 * dt;
+    const joystickMagnitude = Math.min(1, Math.hypot(ctrl.joyX, ctrl.joyY));
+    const keyboardHasPriority = ctrl.up || ctrl.down || ctrl.left || ctrl.right;
+    const usingJoystick = joystickMagnitude > 0.001 && !keyboardHasPriority;
 
-    velocityRef.current *= 0.94;
-    velocityRef.current = THREE.MathUtils.clamp(velocityRef.current, -7, maxSpeed);
+    if (usingJoystick) {
+      // Map a screen-relative stick direction onto the XZ ground plane.
+      // The camera is isometric, so screen-right/up are not the same as world +X/-Z.
+      // Invert the camera's horizontal projection basis to get the world direction.
+      state.camera.updateMatrixWorld(true);
+      cameraRight.setFromMatrixColumn(state.camera.matrixWorld, 0).normalize();
+      cameraUp.setFromMatrixColumn(state.camera.matrixWorld, 1).normalize();
 
-    if (Math.abs(velocityRef.current) > 0.2) {
-      const dir = velocityRef.current > 0 ? 1 : -1;
-      if (ctrl.left) angleRef.current += 3.0 * dt * dir;
-      if (ctrl.right) angleRef.current -= 3.0 * dt * dir;
+      const determinant =
+        cameraRight.x * cameraUp.z - cameraRight.z * cameraUp.x;
+
+      let directionX: number;
+      let directionZ: number;
+
+      if (Math.abs(determinant) > 1e-5) {
+        directionX =
+          (ctrl.joyX * cameraUp.z - cameraRight.z * ctrl.joyY) / determinant;
+        directionZ =
+          (cameraRight.x * ctrl.joyY - ctrl.joyX * cameraUp.x) / determinant;
+      } else {
+        // Defensive fallback in the unlikely event the camera looks straight down.
+        directionX = ctrl.joyX;
+        directionZ = -ctrl.joyY;
+      }
+
+      const directionLength = Math.hypot(directionX, directionZ);
+      if (directionLength > 1e-5) {
+        directionX /= directionLength;
+        directionZ /= directionLength;
+
+        // The car's nose points along local -Z. Convert world XZ direction to yaw.
+        const targetAngle = Math.atan2(-directionX, -directionZ);
+        const angleDifference = Math.atan2(
+          Math.sin(targetAngle - angleRef.current),
+          Math.cos(targetAngle - angleRef.current)
+        );
+
+        // Exponential interpolation chooses the shortest yaw path and is frame-rate independent.
+        const turnBlend = 1 - Math.exp(-12 * dt);
+        angleRef.current += angleDifference * turnBlend;
+      }
+
+      // Analog throttle: a half-deflected stick accelerates at half the normal rate.
+      // Clamp to forward speeds while using global pointing, so the car drives toward the stick.
+      const currentForwardSpeed = Math.max(0, velocityRef.current);
+      velocityRef.current = Math.min(
+        maxSpeed,
+        currentForwardSpeed + accel * joystickMagnitude * dt
+      );
+    } else {
+      // Desktop WASD / arrow-key controls retain the original tank-steering behavior.
+      if (ctrl.up) velocityRef.current += accel * dt;
+      if (ctrl.down) velocityRef.current -= accel * 0.8 * dt;
+
+      // Time-normalized version of the existing 0.94-per-frame drag (equivalent at 60 FPS).
+      velocityRef.current *= Math.pow(0.94, dt * 60);
+      velocityRef.current = THREE.MathUtils.clamp(velocityRef.current, -7, maxSpeed);
+
+      if (Math.abs(velocityRef.current) > 0.2) {
+        const dir = velocityRef.current > 0 ? 1 : -1;
+        if (ctrl.left) angleRef.current += 3.0 * dt * dir;
+        if (ctrl.right) angleRef.current -= 3.0 * dt * dir;
+      }
+
+      // Remove tiny residual speeds after coasting so the car actually settles to a stop.
+      if (!ctrl.up && !ctrl.down && Math.abs(velocityRef.current) < 0.08) {
+        velocityRef.current = 0;
+      }
     }
 
     if (ctrl.jump && yPosRef.current <= 0.01) {
@@ -903,71 +977,113 @@ function DPadButton({
 
 
 
-function Joystick({ setControl }: { setControl: (key: keyof Controls, value: boolean) => void }) {
+function Joystick({
+  controlsRef,
+}: {
+  controlsRef: React.MutableRefObject<Controls>;
+}) {
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const baseRef = useRef<HTMLDivElement>(null);
-  const active = useRef(false);
+  const activePointerId = useRef<number | null>(null);
 
-  const handleMove = useCallback((e: PointerEvent) => {
-    if (!active.current || !baseRef.current) return;
-    
-    const rect = baseRef.current.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    
-    let dx = e.clientX - centerX;
-    let dy = e.clientY - centerY;
+  const updateFromPointer = useCallback(
+    (clientX: number, clientY: number) => {
+      const base = baseRef.current;
+      if (!base) return;
 
-    // Constrain the joystick knob to the outer circle
-    const max = rect.width / 2 - 24; 
-    const dist = Math.hypot(dx, dy);
-    if (dist > max) {
-      dx = (dx / dist) * max;
-      dy = (dy / dist) * max;
+      const rect = base.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      let dx = clientX - centerX;
+      let dy = clientY - centerY;
+
+      // Keep the knob inside the base's circle, even when the captured pointer moves outside.
+      const maxRadius = Math.max(1, rect.width / 2 - JOYSTICK_KNOB_RADIUS - JOYSTICK_EDGE_PADDING);
+      const pixelDistance = Math.hypot(dx, dy);
+      if (pixelDistance > maxRadius) {
+        const clampScale = maxRadius / pixelDistance;
+        dx *= clampScale;
+        dy *= clampScale;
+      }
+
+      // Visual knob offset remains in pixels. Gameplay axes are normalized to [-1, 1].
+      setPos({ x: dx, y: dy });
+      const rawX = dx / maxRadius;
+      const rawY = -dy / maxRadius; // Positive joyY means push upward on screen.
+      const magnitude = Math.min(1, Math.hypot(rawX, rawY));
+
+      if (magnitude <= JOYSTICK_DEADZONE) {
+        controlsRef.current.joyX = 0;
+        controlsRef.current.joyY = 0;
+        return;
+      }
+
+      // Remap magnitude outside the deadzone to the full 0..1 throttle range.
+      const remappedMagnitude = (magnitude - JOYSTICK_DEADZONE) / (1 - JOYSTICK_DEADZONE);
+      const scale = remappedMagnitude / magnitude;
+      controlsRef.current.joyX = THREE.MathUtils.clamp(rawX * scale, -1, 1);
+      controlsRef.current.joyY = THREE.MathUtils.clamp(rawY * scale, -1, 1);
+    },
+    [controlsRef]
+  );
+
+  const stopJoystick = useCallback((pointerId?: number) => {
+    if (
+      activePointerId.current === null ||
+      (pointerId !== undefined && pointerId !== activePointerId.current)
+    ) {
+      return;
     }
-    setPos({ x: dx, y: dy });
 
-    // Map the analog position to our car's digital WASD inputs
-    const thresh = 12;
-    setControl("up", dy < -thresh);
-    setControl("down", dy > thresh);
-    setControl("left", dx < -thresh);
-    setControl("right", dx > thresh);
-  }, [setControl]);
-
-  const handleUp = useCallback(() => {
-    active.current = false;
+    activePointerId.current = null;
+    controlsRef.current.joyX = 0;
+    controlsRef.current.joyY = 0;
     setPos({ x: 0, y: 0 });
-    setControl("up", false);
-    setControl("down", false);
-    setControl("left", false);
-    setControl("right", false);
-    window.removeEventListener("pointermove", handleMove);
-    window.removeEventListener("pointerup", handleUp);
-  }, [handleMove, setControl]);
+  }, [controlsRef]);
 
-  const handleDown = (e: React.PointerEvent) => {
-    active.current = true;
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
-    handleMove(e.nativeEvent); // Trigger immediately on tap
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Use one finger/pointer at a time, avoiding multi-touch input conflicts.
+    if (activePointerId.current !== null) return;
+    if (e.button !== 0) return;
+
+    e.preventDefault();
+    activePointerId.current = e.pointerId;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    updateFromPointer(e.clientX, e.clientY);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activePointerId.current !== e.pointerId) return;
+    e.preventDefault();
+    updateFromPointer(e.clientX, e.clientY);
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    stopJoystick(e.pointerId);
   };
 
   useEffect(() => {
-    return () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-    };
-  }, [handleMove, handleUp]);
+    const handleBlur = () => stopJoystick();
+    window.addEventListener("blur", handleBlur);
+    return () => window.removeEventListener("blur", handleBlur);
+  }, [stopJoystick]);
 
   return (
     <div
       ref={baseRef}
-      onPointerDown={handleDown}
-      className="relative flex h-32 w-32 touch-none items-center justify-center rounded-full border-4 border-slate-900 bg-white/40 shadow-[4px_4px_0_#0f172a] backdrop-blur-md"
+      role="group"
+      aria-label="Movement joystick"
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
+      onLostPointerCapture={handlePointerUp}
+      className="relative flex h-32 w-32 touch-none select-none items-center justify-center rounded-full border-4 border-slate-900 bg-white/40 shadow-[4px_4px_0_#0f172a] backdrop-blur-md"
+      style={{ touchAction: "none", userSelect: "none" }}
     >
       <div
-        className="absolute h-14 w-14 rounded-full border-4 border-slate-900 bg-orange-500 shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)]"
+        aria-hidden="true"
+        className="pointer-events-none absolute h-14 w-14 rounded-full border-4 border-slate-900 bg-orange-500 shadow-[inset_0_-4px_0_rgba(0,0,0,0.2)]"
         style={{ transform: `translate(${pos.x}px, ${pos.y}px)` }}
       />
     </div>
@@ -989,6 +1105,8 @@ export default function ToyIslandWorld() {
     right: false,
     boost: false,
     jump: false,
+    joyX: 0,
+    joyY: 0,
   });
 
   useEffect(() => {
@@ -1011,6 +1129,8 @@ export default function ToyIslandWorld() {
     const reset = () => {
       const c = controlsRef.current;
       c.up = c.down = c.left = c.right = c.boost = c.jump = false;
+      c.joyX = 0;
+      c.joyY = 0;
     };
 
     window.addEventListener("keydown", onDown);
@@ -1023,7 +1143,7 @@ export default function ToyIslandWorld() {
     };
   }, []);
 
-  const setControl = useCallback((key: keyof Controls, value: boolean) => {
+  const setControl = useCallback((key: DigitalControl, value: boolean) => {
     controlsRef.current[key] = value;
   }, []);
 
@@ -1081,9 +1201,9 @@ export default function ToyIslandWorld() {
         Slow down inside a glowing ring to park
       </div>
 
-      {/* Touch D-pad (mobile) */}
-     <div className="absolute bottom-6 left-6 z-30 md:hidden">
-        <Joystick setControl={setControl} />
+      {/* Analog movement joystick (mobile) */}
+      <div className="absolute bottom-6 left-6 z-30 md:hidden">
+        <Joystick controlsRef={controlsRef} />
       </div>
       <div className="absolute bottom-5 right-4 z-30 flex flex-col gap-2 md:hidden">
         <DPadButton label="Jump" onPress={(d) => setControl("jump", d)}>
